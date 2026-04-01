@@ -3,14 +3,53 @@ name: terraform
 on:
   pull_request:
   push:
+    branches:
+      - main
 
 permissions:
   contents: read
   id-token: write
 
 jobs:
-  plan:
-    if: github.event_name == 'pull_request' || github.event_name == 'push'
+  plan_pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: .
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+
+      - name: Terraform init
+        run: terraform init -reconfigure -backend-config=backend-vars/test.tfvars
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        run: terraform plan -input=false -no-color -var-file=tfvars/test.tfvars -out=tfplan
+
+  plan_main:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -48,6 +87,8 @@ jobs:
 
   apply:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: plan_main
+    environment: cicd
     runs-on: ubuntu-latest
     defaults:
       run:
