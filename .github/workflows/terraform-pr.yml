@@ -31,6 +31,7 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.9.8
+          terraform_wrapper: false
 
       - name: Terraform init
         run: terraform init -reconfigure -backend-config=backend-vars/test.tfvars
@@ -42,4 +43,13 @@ jobs:
         run: terraform validate
 
       - name: Terraform plan
-        run: terraform plan -input=false -no-color -var-file=tfvars/test.tfvars -out=tfplan
+        run: |
+          set -o pipefail
+          terraform plan -input=false -no-color -var-file=tfvars/test.tfvars -out=tfplan 2>&1 | tee terraform-plan.log
+
+      - name: Upload Terraform plan log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-pr-plan-log
+          path: terraform-plan.log
