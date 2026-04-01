@@ -33,6 +33,7 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.9.8
+          terraform_wrapper: false
 
       - name: Terraform init
         run: terraform init -reconfigure -backend-config=backend-vars/test.tfvars
@@ -44,7 +45,9 @@ jobs:
         run: terraform validate
 
       - name: Terraform plan
-        run: terraform plan -input=false -no-color -var-file=tfvars/test.tfvars -out=tfplan
+        run: |
+          set -o pipefail
+          terraform plan -input=false -no-color -var-file=tfvars/test.tfvars -out=tfplan 2>&1 | tee terraform-plan.log
 
       - name: Render Terraform plan
         run: terraform show -no-color tfplan > tfplan.txt
@@ -73,6 +76,13 @@ jobs:
           name: terraform-plan-text
           path: tfplan.txt
 
+      - name: Upload Terraform plan log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-main-plan-log
+          path: terraform-plan.log
+
   apply:
     needs: plan
     environment: cicd
@@ -98,6 +108,7 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.9.8
+          terraform_wrapper: false
 
       - name: Download Terraform plan
         uses: actions/download-artifact@v4
@@ -109,4 +120,13 @@ jobs:
         run: terraform init -reconfigure -backend-config=backend-vars/test.tfvars
 
       - name: Terraform apply
-        run: terraform apply -input=false -auto-approve tfplan
+        run: |
+          set -o pipefail
+          terraform apply -input=false -auto-approve tfplan 2>&1 | tee terraform-apply.log
+
+      - name: Upload Terraform apply log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-apply-log
+          path: terraform-apply.log
