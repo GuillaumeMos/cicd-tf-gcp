@@ -46,11 +46,32 @@ jobs:
       - name: Terraform plan
         run: terraform plan -input=false -no-color -var-file=tfvars/test.tfvars -out=tfplan
 
+      - name: Render Terraform plan
+        run: terraform show -no-color tfplan > tfplan.txt
+
+      - name: Publish Terraform plan summary
+        run: |
+          {
+            echo "## Terraform plan"
+            echo
+            echo "Preview of the generated plan before deployment approval."
+            echo
+            echo '```'
+            sed -n '1,300p' tfplan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload Terraform plan
         uses: actions/upload-artifact@v4
         with:
           name: terraform-plan
           path: tfplan
+
+      - name: Upload readable Terraform plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-text
+          path: tfplan.txt
 
   apply:
     needs: plan
