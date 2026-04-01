@@ -8,5 +8,6 @@ service_account_description  = "Service account created by Terraform from GitHub
 service_account_project_roles = [
   "roles/logging.logWriter",
   "roles/monitoring.metricWriter",
-  "roles/viewer"
+  #   "roles/viewer",
+  #   "roles/compute.user",
 ]
