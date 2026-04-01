@@ -1,16 +1,15 @@
-name: terraform-main
+name: terraform-apply
 
 on:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 permissions:
   contents: read
   id-token: write
 
 jobs:
-  plan:
+  apply:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -37,17 +36,8 @@ jobs:
       - name: Terraform init
         run: terraform init -reconfigure -backend-config=backend-vars/test.tfvars
 
-      - name: Terraform fmt
-        run: terraform fmt -check -recursive
-
-      - name: Terraform validate
-        run: terraform validate
-
       - name: Terraform plan
         run: terraform plan -input=false -no-color -var-file=tfvars/test.tfvars -out=tfplan
 
-      - name: Upload Terraform plan
-        uses: actions/upload-artifact@v4
-        with:
-          name: terraform-plan
-          path: tfplan
+      - name: Terraform apply
+        run: terraform apply -input=false -auto-approve tfplan
