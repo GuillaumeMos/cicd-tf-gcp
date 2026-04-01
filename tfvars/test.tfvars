@@ -7,6 +7,6 @@ service_account_display_name = "SA Test CI/CD"
 service_account_description  = "Service account created by Terraform from GitHub Actions."
 service_account_project_roles = [
   "roles/logging.logWriter",
-  "roles/monitoring.metricWriter"
-    "roles/viewer"
+  "roles/monitoring.metricWriter",
+  "roles/viewer"
 ]
