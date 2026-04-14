@@ -1,0 +1,60 @@
+# https://taskfile.dev
+version: "3"
+
+vars:
+  TFVARS_DIR: tfvars
+  BACKEND_DIR: backend-vars
+
+tasks:
+  init:
+    desc: "Init — usage: task init ENV=<env>"
+    requires:
+      vars: [ENV]
+    cmds:
+      - terraform init -reconfigure -backend-config={{.BACKEND_DIR}}/{{.ENV}}.tfvars
+    preconditions:
+      - sh: test -f {{.BACKEND_DIR}}/{{.ENV}}.tfvars
+        msg: "backend-vars/{{.ENV}}.tfvars not found"
+      - sh: test -f {{.TFVARS_DIR}}/{{.ENV}}.tfvars
+        msg: "tfvars/{{.ENV}}.tfvars not found"
+
+  plan:
+    desc: "Init + plan — usage: task plan ENV=<env>"
+    requires:
+      vars: [ENV]
+    cmds:
+      - task: init
+        vars: { ENV: "{{.ENV}}" }
+      - terraform plan -var-file={{.TFVARS_DIR}}/{{.ENV}}.tfvars
+
+  apply:
+    desc: "Init + apply — usage: task apply ENV=<env>"
+    requires:
+      vars: [ENV]
+    cmds:
+      - task: init
+        vars: { ENV: "{{.ENV}}" }
+      - terraform apply -var-file={{.TFVARS_DIR}}/{{.ENV}}.tfvars
+
+  destroy:
+    desc: "Init + destroy — usage: task destroy ENV=<env>"
+    requires:
+      vars: [ENV]
+    cmds:
+      - task: init
+        vars: { ENV: "{{.ENV}}" }
+      - terraform destroy -var-file={{.TFVARS_DIR}}/{{.ENV}}.tfvars
+
+  output:
+    desc: "Init + output — usage: task output ENV=<env>"
+    requires:
+      vars: [ENV]
+    cmds:
+      - task: init
+        vars: { ENV: "{{.ENV}}" }
+      - terraform output
+
+  envs:
+    desc: "List available environments"
+    cmds:
+      - ls -1 {{.TFVARS_DIR}}/*.tfvars | xargs -I{} basename {} .tfvars

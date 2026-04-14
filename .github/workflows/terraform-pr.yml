@@ -8,8 +8,26 @@ permissions:
   id-token: write
 
 jobs:
-  plan:
+  discover:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.discover.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Discover Terraform stacks
+        id: discover
+        run: echo 'matrix<<EOF' >> "$GITHUB_OUTPUT" && python3 ./scripts/discover_terraform_targets.py list-targets --json >> "$GITHUB_OUTPUT" && echo 'EOF' >> "$GITHUB_OUTPUT"
+
+  plan:
+    name: plan (${{ matrix.target.label }})
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(needs.discover.outputs.matrix) }}
     defaults:
       run:
         shell: bash
@@ -34,22 +52,22 @@ jobs:
           terraform_wrapper: false
 
       - name: Terraform init
-        run: terraform init -reconfigure -backend-config=backend-vars/test.tfvars
+        run: terraform -chdir="${{ matrix.target.stack_path }}" init -reconfigure -backend-config=backend-vars/${{ matrix.target.env }}.tfvars
 
       - name: Terraform fmt
-        run: terraform fmt -check -recursive
+        run: terraform -chdir="${{ matrix.target.stack_path }}" fmt -check -recursive
 
       - name: Terraform validate
-        run: terraform validate
+        run: terraform -chdir="${{ matrix.target.stack_path }}" validate
 
       - name: Terraform plan
         run: |
           set -o pipefail
-          terraform plan -input=false -no-color -var-file=tfvars/test.tfvars -out=tfplan 2>&1 | tee terraform-plan.log
+          terraform -chdir="${{ matrix.target.stack_path }}" plan -input=false -no-color -var-file=tfvars/${{ matrix.target.env }}.tfvars -out=tfplan 2>&1 | tee "${{ matrix.target.stack_path }}/terraform-plan.log"
 
       - name: Upload Terraform plan log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-pr-plan-log
-          path: terraform-plan.log
+          name: terraform-pr-plan-log-${{ matrix.target.id }}
+          path: ${{ matrix.target.stack_path }}/terraform-plan.log

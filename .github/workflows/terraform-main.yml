@@ -10,8 +10,26 @@ permissions:
   id-token: write
 
 jobs:
-  plan:
+  discover:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.discover.outputs.matrix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Discover Terraform stacks
+        id: discover
+        run: echo 'matrix<<EOF' >> "$GITHUB_OUTPUT" && python3 ./scripts/discover_terraform_targets.py list-targets --json >> "$GITHUB_OUTPUT" && echo 'EOF' >> "$GITHUB_OUTPUT"
+
+  plan:
+    name: plan (${{ matrix.target.label }})
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(needs.discover.outputs.matrix) }}
     defaults:
       run:
         shell: bash
@@ -36,57 +54,62 @@ jobs:
           terraform_wrapper: false
 
       - name: Terraform init
-        run: terraform init -reconfigure -backend-config=backend-vars/test.tfvars
+        run: terraform -chdir="${{ matrix.target.stack_path }}" init -reconfigure -backend-config=backend-vars/${{ matrix.target.env }}.tfvars
 
       - name: Terraform fmt
-        run: terraform fmt -check -recursive
+        run: terraform -chdir="${{ matrix.target.stack_path }}" fmt -check -recursive
 
       - name: Terraform validate
-        run: terraform validate
+        run: terraform -chdir="${{ matrix.target.stack_path }}" validate
 
       - name: Terraform plan
         run: |
           set -o pipefail
-          terraform plan -input=false -no-color -var-file=tfvars/test.tfvars -out=tfplan 2>&1 | tee terraform-plan.log
+          terraform -chdir="${{ matrix.target.stack_path }}" plan -input=false -no-color -var-file=tfvars/${{ matrix.target.env }}.tfvars -out=tfplan 2>&1 | tee "${{ matrix.target.stack_path }}/terraform-plan.log"
 
       - name: Render Terraform plan
-        run: terraform show -no-color tfplan > tfplan.txt
+        run: terraform -chdir="${{ matrix.target.stack_path }}" show -no-color tfplan > "${{ matrix.target.stack_path }}/tfplan.txt"
 
       - name: Publish Terraform plan summary
         run: |
           {
-            echo "## Terraform plan"
+            echo "## Terraform plan - ${{ matrix.target.label }}"
             echo
             echo "Preview of the generated plan before deployment approval."
             echo
             echo '```'
-            sed -n '1,300p' tfplan.txt
+            sed -n '1,300p' "${{ matrix.target.stack_path }}/tfplan.txt"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Terraform plan
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-plan
-          path: tfplan
+          name: terraform-plan-${{ matrix.target.id }}
+          path: ${{ matrix.target.stack_path }}/tfplan
 
       - name: Upload readable Terraform plan
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-plan-text
-          path: tfplan.txt
+          name: terraform-plan-text-${{ matrix.target.id }}
+          path: ${{ matrix.target.stack_path }}/tfplan.txt
 
       - name: Upload Terraform plan log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-main-plan-log
-          path: terraform-plan.log
+          name: terraform-main-plan-log-${{ matrix.target.id }}
+          path: ${{ matrix.target.stack_path }}/terraform-plan.log
 
   apply:
-    needs: plan
+    name: apply (${{ matrix.target.label }})
+    needs: [discover, plan]
     environment: cicd
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(needs.discover.outputs.matrix) }}
     defaults:
       run:
         shell: bash
@@ -113,20 +136,20 @@ jobs:
       - name: Download Terraform plan
         uses: actions/download-artifact@v4
         with:
-          name: terraform-plan
-          path: .
+          name: terraform-plan-${{ matrix.target.id }}
+          path: ${{ matrix.target.stack_path }}
 
       - name: Terraform init
-        run: terraform init -reconfigure -backend-config=backend-vars/test.tfvars
+        run: terraform -chdir="${{ matrix.target.stack_path }}" init -reconfigure -backend-config=backend-vars/${{ matrix.target.env }}.tfvars
 
       - name: Terraform apply
         run: |
           set -o pipefail
-          terraform apply -input=false -auto-approve tfplan 2>&1 | tee terraform-apply.log
+          terraform -chdir="${{ matrix.target.stack_path }}" apply -input=false -auto-approve tfplan 2>&1 | tee "${{ matrix.target.stack_path }}/terraform-apply.log"
 
       - name: Upload Terraform apply log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-apply-log
-          path: terraform-apply.log
+          name: terraform-apply-log-${{ matrix.target.id }}
+          path: ${{ matrix.target.stack_path }}/terraform-apply.log
