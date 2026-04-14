@@ -9,5 +9,4 @@ service_account_project_roles = [
   "roles/logging.logWriter",
   "roles/monitoring.metricWriter",
   "roles/viewer",
-
 ]
