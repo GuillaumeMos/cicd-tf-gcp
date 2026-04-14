@@ -11,6 +11,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 SKIP_DIRS = {".git", ".github", ".terraform", "__pycache__", "scripts"}
 IGNORED_SUFFIXES = {".md"}
+MAX_SUMMARY_ROWS = 50
 
 
 def is_stack_dir(path: Path) -> bool:
@@ -208,6 +209,189 @@ def filtered_targets(changed_files: list[str], stack_filter: str | None = None) 
     ]
 
 
+def analyze_changed_files(changed_files: list[str], stack_filter: str | None = None) -> list[dict[str, object]]:
+    stacks = stack_definitions()
+    if stack_filter is not None:
+        stacks = [
+            stack
+            for stack in stacks
+            if stack["path"] == stack_filter or stack["id"] == stack_filter
+        ]
+
+    targets_by_id = {target["id"]: target for target in target_catalog(stack_filter)}
+    stacks_by_path = {stack["path"]: stack for stack in stacks}
+    analysis: list[dict[str, object]] = []
+
+    for path in changed_files:
+        if is_ignored_change(path):
+            analysis.append(
+                {
+                    "path": path,
+                    "classification": "ignored",
+                    "effect": "Ignored by discovery rules.",
+                    "targets": [],
+                }
+            )
+            continue
+
+        stack_path = root_stack_path_for_file(path, stacks)
+        if stack_path is None:
+            analysis.append(
+                {
+                    "path": path,
+                    "classification": "outside stack",
+                    "effect": "Outside any Terraform stack.",
+                    "targets": [],
+                }
+            )
+            continue
+
+        stack = stacks_by_path.get(stack_path)
+        if stack is None:
+            analysis.append(
+                {
+                    "path": path,
+                    "classification": "outside stack",
+                    "effect": "Outside the selected stack filter.",
+                    "targets": [],
+                }
+            )
+            continue
+
+        relative = path if stack_path == "." else path[len(stack_path) + 1 :]
+
+        if relative.startswith("tfvars/") and relative.endswith(".tfvars"):
+            env = Path(relative).stem
+            target_id = f"{stack['id']}-{env}"
+            target = targets_by_id.get(target_id)
+            if target is None:
+                effect = f"Environment `{env}` has no matching tfvars/backend-vars pair."
+                targets: list[str] = []
+            else:
+                effect = f"Selects environment `{target['label']}`."
+                targets = [target["label"]]
+            analysis.append(
+                {
+                    "path": path,
+                    "classification": "single environment",
+                    "effect": effect,
+                    "targets": targets,
+                }
+            )
+            continue
+
+        if relative.startswith("backend-vars/") and relative.endswith(".tfvars"):
+            env = Path(relative).stem
+            target_id = f"{stack['id']}-{env}"
+            target = targets_by_id.get(target_id)
+            if target is None:
+                effect = f"Environment `{env}` has no matching tfvars/backend-vars pair."
+                targets = []
+            else:
+                effect = f"Selects environment `{target['label']}`."
+                targets = [target["label"]]
+            analysis.append(
+                {
+                    "path": path,
+                    "classification": "single environment",
+                    "effect": effect,
+                    "targets": targets,
+                }
+            )
+            continue
+
+        stack_targets = [
+            target["label"]
+            for target in targets_by_id.values()
+            if target["stack_id"] == stack["id"]
+        ]
+        analysis.append(
+            {
+                "path": path,
+                "classification": "whole stack",
+                "effect": f"Selects all environments in stack `{stack['path']}`.",
+                "targets": stack_targets,
+            }
+        )
+
+    return analysis
+
+
+def markdown_escape(value: str) -> str:
+    return value.replace("|", "\\|").replace("\n", " ")
+
+
+def render_target_list(labels: list[str]) -> str:
+    if not labels:
+        return "none"
+    return ", ".join(f"`{markdown_escape(label)}`" for label in labels)
+
+
+def render_markdown_summary(changed_files: list[str], targets: list[dict[str, str]], stack_filter: str | None = None) -> str:
+    analysis = analyze_changed_files(changed_files, stack_filter)
+    lines = [
+        "## Terraform Target Discovery",
+        "",
+        f"- Changed files: `{len(changed_files)}`",
+        f"- Selected targets: `{len(targets)}`",
+        "- Rule: `tfvars/<env>.tfvars` or `backend-vars/<env>.tfvars` selects one environment. Any other file inside a stack selects all environments in that stack.",
+        "",
+        "### Changed Files",
+        "",
+        "| File | Classification | Effect | Targets |",
+        "| --- | --- | --- | --- |",
+    ]
+
+    if not analysis:
+        lines.append("| _none_ | - | No changed files were provided. | all targets |")
+    else:
+        for item in analysis[:MAX_SUMMARY_ROWS]:
+            lines.append(
+                "| `{path}` | {classification} | {effect} | {targets} |".format(
+                    path=markdown_escape(str(item["path"])),
+                    classification=markdown_escape(str(item["classification"])),
+                    effect=markdown_escape(str(item["effect"])),
+                    targets=render_target_list(list(item["targets"])),
+                )
+            )
+        remaining_changes = len(analysis) - MAX_SUMMARY_ROWS
+        if remaining_changes > 0:
+            lines.append(f"| _..._ | _..._ | `{remaining_changes}` additional changed files omitted. | _..._ |")
+
+    lines.extend(
+        [
+            "",
+            "### Selected Targets",
+            "",
+        ]
+    )
+
+    if not targets:
+        lines.append("No Terraform target selected for this change set.")
+    else:
+        lines.extend(
+            [
+                "| Target | Stack | Environment | tfvars | backend-vars |",
+                "| --- | --- | --- | --- | --- |",
+            ]
+        )
+        for target in targets[:MAX_SUMMARY_ROWS]:
+            lines.append(
+                "| `{label}` | `{stack}` | `{env}` | `{tfvars}` | `{backend}` |".format(
+                    label=markdown_escape(target["label"]),
+                    stack=markdown_escape(target["stack_path"]),
+                    env=markdown_escape(target["env"]),
+                    tfvars=markdown_escape(target["tfvars_file"]),
+                    backend=markdown_escape(target["backend_file"]),
+                )
+            )
+        remaining_targets = len(targets) - MAX_SUMMARY_ROWS
+        if remaining_targets > 0:
+            lines.append(f"| _..._ | _..._ | _..._ | _..._ | `{remaining_targets}` additional targets omitted. |")
+
+    return "\n".join(lines)
+
+
 def resolve_stack(requested: str | None) -> str:
     stacks = stack_catalog()
     by_id = {item["id"]: item["path"] for item in stacks}
@@ -281,6 +465,13 @@ def cmd_resolve_stack(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_render_summary(args: argparse.Namespace) -> int:
+    changed_files = load_changed_files(Path(args.changed_files_from))
+    targets = filtered_targets(changed_files, args.stack)
+    print(render_markdown_summary(changed_files, targets, args.stack))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Discover Terraform stacks and environments.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -303,6 +494,11 @@ def build_parser() -> argparse.ArgumentParser:
     resolve = subparsers.add_parser("resolve-stack")
     resolve.add_argument("stack", nargs="?")
     resolve.set_defaults(func=cmd_resolve_stack)
+
+    render_summary = subparsers.add_parser("render-summary")
+    render_summary.add_argument("--stack")
+    render_summary.add_argument("--changed-files-from", required=True)
+    render_summary.set_defaults(func=cmd_render_summary)
 
     return parser
 

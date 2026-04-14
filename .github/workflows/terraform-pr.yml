@@ -41,16 +41,8 @@ jobs:
 
       - name: Publish discovery summary
         run: |
-          {
-            echo "## Terraform target discovery"
-            echo
-            echo "Changed files: ${{ steps.changes.outputs.changed_count }}"
-            echo "Selected targets: ${{ steps.discover.outputs.target_count }}"
-            echo
-            echo '```json'
-            python3 ./scripts/discover_terraform_targets.py list-targets --changed-files-from changed-files.txt --json
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          python3 ./scripts/discover_terraform_targets.py render-summary \
+            --changed-files-from changed-files.txt >> "$GITHUB_STEP_SUMMARY"
 
   plan:
     name: plan (${{ matrix.target.label }})
