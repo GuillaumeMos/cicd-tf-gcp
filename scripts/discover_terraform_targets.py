@@ -10,11 +10,6 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 SKIP_DIRS = {".git", ".github", ".terraform", "__pycache__", "scripts"}
-GLOBAL_TRIGGER_PATHS = {
-    "Taskfile.yml",
-    ".github/workflows",
-    "scripts",
-}
 IGNORED_SUFFIXES = {".md"}
 
 
@@ -118,13 +113,6 @@ def load_changed_files(path: Path) -> list[str]:
     return changed_files
 
 
-def is_global_trigger(path: str) -> bool:
-    return any(
-        path == trigger or path.startswith(f"{trigger}/")
-        for trigger in GLOBAL_TRIGGER_PATHS
-    )
-
-
 def is_ignored_change(path: str) -> bool:
     return Path(path).suffix in IGNORED_SUFFIXES
 
@@ -179,9 +167,6 @@ def impacted_target_ids(changed_files: list[str], stack_filter: str | None = Non
     targets = {target["id"] for target in target_catalog(stack_filter)}
 
     if not changed_files:
-        return targets
-
-    if any(is_global_trigger(path) for path in changed_files):
         return targets
 
     impacted: set[str] = set()
