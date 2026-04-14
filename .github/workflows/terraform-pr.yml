@@ -12,17 +12,50 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.discover.outputs.matrix }}
+      target_count: ${{ steps.discover.outputs.target_count }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Collect changed files
+        id: changes
+        run: |
+          set -euo pipefail
+          git diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" > changed-files.txt
+          echo "changed_count=$(grep -c . changed-files.txt || true)" >> "$GITHUB_OUTPUT"
 
       - name: Discover Terraform stacks
         id: discover
-        run: echo 'matrix<<EOF' >> "$GITHUB_OUTPUT" && python3 ./scripts/discover_terraform_targets.py list-targets --json >> "$GITHUB_OUTPUT" && echo 'EOF' >> "$GITHUB_OUTPUT"
+        run: |
+          set -euo pipefail
+          matrix_json="$(python3 ./scripts/discover_terraform_targets.py list-targets --changed-files-from changed-files.txt --json)"
+          target_count="$(python3 -c 'import json,sys; print(len(json.loads(sys.argv[1])))' "$matrix_json")"
+          {
+            echo 'matrix<<EOF'
+            echo "$matrix_json"
+            echo 'EOF'
+            echo "target_count=$target_count"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish discovery summary
+        run: |
+          {
+            echo "## Terraform target discovery"
+            echo
+            echo "Changed files: ${{ steps.changes.outputs.changed_count }}"
+            echo "Selected targets: ${{ steps.discover.outputs.target_count }}"
+            echo
+            echo '```json'
+            python3 ./scripts/discover_terraform_targets.py list-targets --changed-files-from changed-files.txt --json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   plan:
     name: plan (${{ matrix.target.label }})
     needs: discover
+    if: needs.discover.outputs.target_count != '0'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
