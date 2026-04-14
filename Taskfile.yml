@@ -1,60 +1,78 @@
 # https://taskfile.dev
 version: "3"
 
-vars:
-  TFVARS_DIR: tfvars
-  BACKEND_DIR: backend-vars
-
 tasks:
   init:
-    desc: "Init — usage: task init ENV=<env>"
+    desc: "Init — usage: task init ENV=<env> [COMPONENT=<stack>]"
     requires:
       vars: [ENV]
     cmds:
-      - terraform init -reconfigure -backend-config={{.BACKEND_DIR}}/{{.ENV}}.tfvars
-    preconditions:
-      - sh: test -f {{.BACKEND_DIR}}/{{.ENV}}.tfvars
-        msg: "backend-vars/{{.ENV}}.tfvars not found"
-      - sh: test -f {{.TFVARS_DIR}}/{{.ENV}}.tfvars
-        msg: "tfvars/{{.ENV}}.tfvars not found"
+      - |
+        set -euo pipefail
+        STACK_PATH="$(python3 ./scripts/discover_terraform_targets.py resolve-stack "${COMPONENT:-}")"
+        terraform -chdir="$STACK_PATH" init -reconfigure -backend-config=backend-vars/{{.ENV}}.tfvars
 
   plan:
-    desc: "Init + plan — usage: task plan ENV=<env>"
+    desc: "Init + plan — usage: task plan ENV=<env> [COMPONENT=<stack>]"
     requires:
       vars: [ENV]
     cmds:
       - task: init
         vars: { ENV: "{{.ENV}}" }
-      - terraform plan -var-file={{.TFVARS_DIR}}/{{.ENV}}.tfvars
+      - |
+        set -euo pipefail
+        STACK_PATH="$(python3 ./scripts/discover_terraform_targets.py resolve-stack "${COMPONENT:-}")"
+        terraform -chdir="$STACK_PATH" plan -var-file=tfvars/{{.ENV}}.tfvars
 
   apply:
-    desc: "Init + apply — usage: task apply ENV=<env>"
+    desc: "Init + apply — usage: task apply ENV=<env> [COMPONENT=<stack>]"
     requires:
       vars: [ENV]
     cmds:
       - task: init
         vars: { ENV: "{{.ENV}}" }
-      - terraform apply -var-file={{.TFVARS_DIR}}/{{.ENV}}.tfvars
+      - |
+        set -euo pipefail
+        STACK_PATH="$(python3 ./scripts/discover_terraform_targets.py resolve-stack "${COMPONENT:-}")"
+        terraform -chdir="$STACK_PATH" apply -var-file=tfvars/{{.ENV}}.tfvars
 
   destroy:
-    desc: "Init + destroy — usage: task destroy ENV=<env>"
+    desc: "Init + destroy — usage: task destroy ENV=<env> [COMPONENT=<stack>]"
     requires:
       vars: [ENV]
     cmds:
       - task: init
         vars: { ENV: "{{.ENV}}" }
-      - terraform destroy -var-file={{.TFVARS_DIR}}/{{.ENV}}.tfvars
+      - |
+        set -euo pipefail
+        STACK_PATH="$(python3 ./scripts/discover_terraform_targets.py resolve-stack "${COMPONENT:-}")"
+        terraform -chdir="$STACK_PATH" destroy -var-file=tfvars/{{.ENV}}.tfvars
 
   output:
-    desc: "Init + output — usage: task output ENV=<env>"
+    desc: "Init + output — usage: task output ENV=<env> [COMPONENT=<stack>]"
     requires:
       vars: [ENV]
     cmds:
       - task: init
         vars: { ENV: "{{.ENV}}" }
-      - terraform output
+      - |
+        set -euo pipefail
+        STACK_PATH="$(python3 ./scripts/discover_terraform_targets.py resolve-stack "${COMPONENT:-}")"
+        terraform -chdir="$STACK_PATH" output
 
   envs:
-    desc: "List available environments"
+    desc: "List available environments for the selected or default stack"
     cmds:
-      - ls -1 {{.TFVARS_DIR}}/*.tfvars | xargs -I{} basename {} .tfvars
+      - |
+        set -euo pipefail
+        python3 ./scripts/discover_terraform_targets.py list-envs --stack "${COMPONENT:-}"
+
+  stacks:
+    desc: "List available Terraform stacks under test_cicd"
+    cmds:
+      - python3 ./scripts/discover_terraform_targets.py list-stacks
+
+  targets:
+    desc: "List stack/environment targets discovered from tfvars and backend-vars"
+    cmds:
+      - python3 ./scripts/discover_terraform_targets.py list-targets
